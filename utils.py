@@ -21,7 +21,7 @@ COLOR_SEQUENCE = ["#315C8C", "#E07A5F", "#81B29A", "#F2CC8F", "#6D597A"]
 
 
 def prepare_data(raw: pd.DataFrame) -> pd.DataFrame:
-    """Clean the uploaded source data using the notebook's documented preparation."""
+    """Clean the uploaded source data."""
     df = raw.copy()
     df.columns = [str(c).strip() for c in df.columns]
 

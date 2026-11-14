@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from utils import (
-    require_data, CATEGORICAL_COLS, COLOR_SEQUENCE, style_fig,
+    require_data, NUMERIC_COLS, CATEGORICAL_COLS, COLOR_SEQUENCE, style_fig,
     kpi_row, churn_rate, category_churn_table
 )
 
@@ -52,8 +53,55 @@ else:
 
 st.divider()
 
+
+# Numerical features by churn status
+st.divider()
+st.subheader("2.Numerical Features by Churn Status")
+
+num_cols = [c for c in NUMERIC_COLS if c in df.columns]
+
+selected_box_num = st.selectbox(
+    "Choose a numerical feature to compare",
+    num_cols,
+    key="deep_box_choice"
+)
+
+fig = px.box(
+    df,
+    x="Churn",
+    y=selected_box_num,
+    color="Churn",
+    color_discrete_map={
+        "No": COLOR_SEQUENCE[0],
+        "Yes": COLOR_SEQUENCE[1]
+    },
+    points="outliers",
+    title=f"{selected_box_num} Distribution by Churn Status",
+    labels={
+        "Churn": "Churn Status",
+        selected_box_num: selected_box_num
+    },
+)
+
+fig.update_layout(
+    xaxis_title="Churn Status",
+    yaxis_title=selected_box_num,
+    boxmode="group",
+)
+
+st.plotly_chart(
+    style_fig(fig, 450),
+    use_container_width=True
+)
+
+st.caption(
+    "Compare the median, spread, and outliers of each numerical feature "
+    "between customers who churned and those who stayed."
+)
+
+
 # Tenure and churn
-st.subheader("2. Tenure and customer retention")
+st.subheader("3. Tenure and customer retention")
 if "TenureGroup" in df.columns:
     tenure_summary = (
         df.groupby("TenureGroup", observed=False)
@@ -121,94 +169,113 @@ st.caption(
 # Contract and payment method profile
 st.divider()
 
-# 3. Customer relationship matrix
 st.divider()
-st.subheader("3. Customer Relationship Matrix")
-
+st.subheader("4. Service Bundling & Retention Mosaic Chart")
 st.write(
-    "Explore how combinations of customer characteristics relate to "
-    "customer churn. Each cell represents either the number of customers "
-    "or the observed churn rate for that combination."
+    "Investigate which combinations of internet service and add-on features retain customers best. "
+    "Bar width represents customer volume, while bar height shows the exact retention vs. churn split."
 )
 
-col1, col2, col3 = st.columns(3)
+addon_cols = [
+    c for c in ["OnlineSecurity", "OnlineBackup", "DeviceProtection",
+                "TechSupport", "StreamingTV", "StreamingMovies"] if c in df.columns
+]
 
-with col1:
-    row_var = st.selectbox(
-        "Rows",
-        available_cats,
-        index=available_cats.index("Contract")
-        if "Contract" in available_cats else 0,
-        key="matrix_rows"
+# Filter to internet subscribers so add-on bundling comparisons are meaningful
+internet_df = df[df["InternetService"] != "No"].copy() if "InternetService" in df.columns else df.copy()
+
+if addon_cols and "InternetService" in internet_df.columns:
+    internet_df["AddonCount"] = internet_df[addon_cols].eq("Yes").sum(axis=1)
+    internet_df["BundleTier"] = pd.cut(
+        internet_df["AddonCount"],
+        bins=[-1, 0, 2, 6],
+        labels=["0 Add-ons", "1–2 Add-ons", "3–6 Add-ons"],
     )
 
-with col2:
-    col_options = [c for c in available_cats if c != row_var]
-    col_var = st.selectbox(
-        "Columns",
-        col_options,
-        index=col_options.index("PaymentMethod")
-        if "PaymentMethod" in col_options else 0,
-        key="matrix_cols"
+    b_col1, b_col2 = st.columns([1, 1.2])
+    with b_col1:
+        bundle_mode = st.radio(
+            "Bundling perspective",
+            ["Internet + Specific Add-on", "Internet + Total Add-on Tier"],
+            horizontal=True,
+            key="bundle_mode",
+        )
+    with b_col2:
+        if bundle_mode == "Internet + Specific Add-on":
+            selected_addon = st.selectbox(
+                "Choose add-on service",
+                addon_cols,
+                index=addon_cols.index("TechSupport") if "TechSupport" in addon_cols else 0,
+                key="mosaic_addon",
+            )
+            combo = (
+                internet_df["InternetService"].astype(str)
+                + " | "
+                + selected_addon
+                + ": "
+                + internet_df[selected_addon].astype(str)
+            )
+            chart_title = f"Service Bundling Mosaic: Internet + {selected_addon}"
+        else:
+            combo = (
+                internet_df["InternetService"].astype(str)
+                + " | "
+                + internet_df["BundleTier"].astype(str)
+            )
+            chart_title = "Service Bundling Mosaic: Internet + Add-on Bundle Size"
+
+    ct = pd.crosstab(combo, internet_df["Churn"])[["No", "Yes"]]
+    # Sort by retention rate ("No" %) descending so the best-retaining bundles appear first
+    retention_order = (ct["No"] / ct.sum(axis=1)).sort_values(ascending=False).index
+    ct = ct.loc[retention_order]
+
+    widths = ct.sum(axis=1).values
+    props = ct.div(ct.sum(axis=1), axis=0).mul(100).round(1)
+    x_pos = np.cumsum(widths) - widths / 2
+
+    fig_bundle = go.Figure()
+    for status, label_name, color in [
+        ("No", "Retained (No Churn)", COLOR_SEQUENCE[0]),
+        ("Yes", "Churned (Yes)", COLOR_SEQUENCE[1]),
+    ]:
+        fig_bundle.add_trace(
+            go.Bar(
+                name=label_name,
+                x=x_pos,
+                y=props[status],
+                width=widths,
+                marker_color=color,
+                marker_line=dict(color="white", width=1.5),
+                text=[f"{p:.0f}%" if w > widths.sum() * 0.05 else "" for p, w in zip(props[status], widths)],
+                textposition="inside",
+                customdata=np.stack([ct.index, ct[status], widths], axis=-1),
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    f"{label_name}: %{{y:.1f}}% (%{{customdata[1]:,}} customers)<br>"
+                    "Bundle total: %{customdata[2]:,}<extra></extra>"
+                ),
+            )
+        )
+
+    fig_bundle.update_layout(
+        barmode="stack",
+        title=f"{chart_title} (Width = Customers, Height = Retention/Churn %)",
+        yaxis=dict(title="Share of bundle (%)", range=[0, 100]),
+        xaxis=dict(
+            title="Service bundles ordered from highest retention to lowest retention",
+            tickvals=x_pos,
+            ticktext=ct.index,
+            tickangle=-20,
+        ),
     )
-
-with col3:
-    matrix_metric = st.selectbox(
-        "Display metric",
-        ["Churn rate (%)", "Customer count"],
-        key="matrix_metric"
+    st.plotly_chart(style_fig(fig_bundle, 480), use_container_width=True)
+    st.caption(
+        "Excludes customers without internet service. Bundles are ordered left-to-right from highest retention rate to highest churn rate."
     )
-
-if matrix_metric == "Churn rate (%)":
-    matrix = pd.pivot_table(
-        df,
-        index=row_var,
-        columns=col_var,
-        values="Churn",
-        aggfunc=lambda x: 100 * x.eq("Yes").mean()
-    )
-
-    color_label = "Churn rate (%)"
-    text_format = ".1f"
-
-else:
-    matrix = pd.crosstab(
-        df[row_var],
-        df[col_var]
-    )
-
-    color_label = "Customers"
-    text_format = True
-
-fig = px.imshow(
-    matrix,
-    text_auto=text_format,
-    aspect="auto",
-    color_continuous_scale="OrRd"
-    if matrix_metric == "Churn rate (%)"
-    else "Blues",
-    labels={
-        "x": col_var,
-        "y": row_var,
-        "color": color_label
-    },
-    title=f"{matrix_metric}: {row_var} vs. {col_var}"
-)
-
-st.plotly_chart(
-    style_fig(fig, 500),
-    use_container_width=True
-)
-
-st.caption(
-    "Each cell represents a combination of two customer characteristics. "
-    "Churn rates are descriptive and do not establish causation."
-)
-
 
 # Customer profile explorer (transparent filtering, not a model)
 st.divider()
-st.subheader("4. Customer profile explorer")
+st.subheader("5. Customer profile explorer")
 st.write(
     "Combine customer characteristics to inspect a profile and compare its observed churn rate "
     "with the overall dataset. This is a filter-based descriptive analysis, not a risk prediction."
@@ -256,7 +323,7 @@ else:
 st.divider()
 
 # Rule-based profile comparisons inspired by notebook's selected factors, not clustering.
-st.subheader("5. Comparing selected customer profiles")
+st.subheader("6. Comparing selected customer profiles")
 st.write(
     "The notebook's segmentation work highlighted combinations involving contract type, "
     "payment method, internet service, tenure, and paperless billing. The profiles below "
@@ -291,24 +358,31 @@ for label, mask in profile_definitions:
     })
 if rows:
     profile_df = pd.DataFrame(rows).sort_values("Churn rate (%)", ascending=False)
-    fig = px.bar(
-        profile_df.sort_values("Churn rate (%)"),
-        x="Churn rate (%)", y="Profile", orientation="h",
-        color="Churn rate (%)", color_continuous_scale="OrRd",
-        text="Churn rate (%)", hover_data=["Customers", "Churned", "Share of dataset (%)"],
-        title="Observed churn rate across selected profiles",
-    )
-    fig.add_vline(x=overall_rate, line_dash="dash", line_color="#315C8C",
-                  annotation_text=f"Overall: {overall_rate:.1f}%")
-    fig.update_traces(textposition="outside")
-    fig.update_layout(coloraxis_showscale=False, yaxis_title="")
-    st.plotly_chart(style_fig(fig, 400), use_container_width=True)
-    st.dataframe(profile_df, use_container_width=True, hide_index=True)
+    # Add average monthly charge per profile
+    avg_charges = [round(df[mask]["MonthlyCharges"].mean(), 2) for _, mask in profile_definitions]
+    profile_df["Avg Monthly Charge ($)"] = avg_charges
 
+    fig_bubble = px.scatter(
+        profile_df,
+        x="Avg Monthly Charge ($)",
+        y="Churn rate (%)",
+        size="Customers",
+        color="Profile",
+        text="Profile",
+        size_max=55,
+        color_discrete_sequence=COLOR_SEQUENCE,
+        hover_data=["Customers", "Churned", "Share of dataset (%)"],
+        title="Segment Risk vs. Revenue (Bubble Size = Customer Count)",
+    )
+    fig_bubble.add_hline(y=overall_rate, line_dash="dash", line_color="#315C8C",
+                         annotation_text=f"Overall: {overall_rate:.1f}%")
+    fig_bubble.update_traces(textposition="top center")
+    st.plotly_chart(style_fig(fig_bubble, 440), use_container_width=True)
+    st.dataframe(profile_df, use_container_width=True, hide_index=True)
 st.divider()
 
 # Business interpretation, grounded in the currently loaded data
-st.subheader("6. Business interpretation")
+st.subheader("7. Business interpretation")
 st.markdown(
     """
     Use the comparisons above to frame retention recommendations. A higher observed churn

@@ -42,5 +42,5 @@ else:
 
 st.caption(
     "Methodology: this dashboard uses descriptive statistics and aggregations only. "
-    "It does not train or run machine-learning models."
+
 )
