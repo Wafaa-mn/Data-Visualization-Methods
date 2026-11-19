@@ -4,24 +4,113 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from utils import (
-    require_data, NUMERIC_COLS, CATEGORICAL_COLS, COLOR_SEQUENCE, style_fig,
-    kpi_row, churn_rate, category_churn_table
+    require_data, NUMERIC_COLS, CATEGORICAL_COLS, COLOR_SEQUENCE, style_fig, churn_rate, category_churn_table
 )
 
-st.set_page_config(page_title="Deeper Analysis | Telecom Churn", page_icon="📈", layout="wide")
+def viz_info(description):
+    with st.popover("ⓘ About this visualization"):
+        st.write(description)
+
+st.set_page_config(page_title="Customer Churn Dashboard | Telecom Churn", page_icon="📈", layout="wide")
 df = require_data()
 
-st.title("Deeper Churn Analysis")
-st.caption(
-    "A descriptive investigation of churn patterns and customer profiles. "
-    "All comparisons are calculated directly from the observed data; no predictive model is used."
-)
-kpi_row(df)
+
+st.title("Customer Churn Dashboard")
+
+# Dashboard information
+with st.popover("ⓘ About this dashboard"):
+    st.write(
+        "This dashboard explores customer churn patterns, "
+        "retention, and customer characteristics using descriptive analysis."
+    )
+    st.write(
+        "For detailed exploratory data analysis, numerical and categorical "
+        "distributions, correlations, and dataset information, visit the EDA page."
+    )
+    st.page_link("pages/1_EDA.py", label="Explore EDA", icon="📊")
+
 overall_rate = churn_rate(df)
+
+# Customer churn composition
+st.subheader("Customer Overview")
+
+
+churn_counts = (
+    df["Churn"]
+    .value_counts()
+    .reindex(["No", "Yes"], fill_value=0)
+    .rename_axis("Churn")
+    .reset_index(name="Customers")
+)
+
+churn_counts["Percentage"] = (
+    churn_counts["Customers"] / len(df) * 100
+)
+
+churn_counts["Label"] = churn_counts.apply(
+    lambda row: (
+        f"{row['Customers']:,} ({row['Percentage']:.1f}%)"
+    ),
+    axis=1
+)
+
+churn_counts["Group"] = "Customer base"
+
+fig = px.bar(
+    churn_counts,
+    x="Percentage",
+    y="Group",
+    color="Churn",
+    orientation="h",
+    text="Label",
+    color_discrete_map={
+        "No": COLOR_SEQUENCE[0],
+        "Yes": COLOR_SEQUENCE[1]
+    },
+    hover_data={
+        "Customers": True,
+        "Percentage": ":.1f",
+        "Label": False,
+        "Group": False
+    },
+    title=f"Customer Churn Composition — {len(df):,} Customers"
+)
+
+fig.update_layout(
+    barmode="stack",
+    xaxis=dict(
+        title="Share of customers (%)",
+        range=[0, 100]
+    ),
+    yaxis=dict(
+        title="",
+        showticklabels=False
+    ),
+    legend_title="Churn status",
+    height=190,
+)
+
+fig.update_traces(
+    textposition="inside",
+    insidetextanchor="middle"
+)
+
+st.plotly_chart(
+    style_fig(fig, 190),
+    use_container_width=True
+)
+
 st.divider()
+
 
 # Churn comparison across categories
 st.subheader("1. Which customer characteristics are associated with higher churn?")
+
+viz_info(
+    "Compares churn rates across customer groups, such as contract types, "
+    "payment methods, and internet services. This helps identify which "
+    "categories have higher or lower observed churn rates."
+)
 available_cats = [c for c in CATEGORICAL_COLS if c in df.columns]
 selected_factors = st.multiselect(
     "Choose factors to compare",
@@ -47,7 +136,8 @@ if selected_factors:
             fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
             fig.update_layout(coloraxis_showscale=False, xaxis_title="Churn rate (%)", yaxis_title="")
             st.plotly_chart(style_fig(fig, 390), use_container_width=True)
-            st.dataframe(summary, use_container_width=True, hide_index=True)
+            with st.expander(f"📋 View {factor} summary table", expanded=True):
+                st.dataframe(summary, use_container_width=True, hide_index=True)
 else:
     st.info("Select at least one categorical factor to compare.")
 
@@ -55,8 +145,13 @@ st.divider()
 
 
 # Numerical features by churn status
-st.divider()
 st.subheader("2.Numerical Features by Churn Status")
+
+viz_info(
+    "Compares the distribution of numerical customer characteristics "
+    "between customers who churned and those who stayed. Use the selector "
+    "to explore features such as tenure, monthly charges, and total charges."
+)
 
 num_cols = [c for c in NUMERIC_COLS if c in df.columns]
 
@@ -102,6 +197,11 @@ st.caption(
 
 # Tenure and churn
 st.subheader("3. Tenure and customer retention")
+viz_info(
+    "Groups customers by tenure to compare churn rates and customer counts "
+    "at different stages of the customer relationship. This provides an "
+    "overview of how churn varies across tenure groups."
+)
 if "TenureGroup" in df.columns:
     tenure_summary = (
         df.groupby("TenureGroup", observed=False)
@@ -130,11 +230,20 @@ if "TenureGroup" in df.columns:
         )
         fig.update_layout(coloraxis_showscale=False, xaxis_title="", yaxis_title="Customers")
         st.plotly_chart(style_fig(fig), use_container_width=True)
-    st.dataframe(tenure_summary, use_container_width=True, hide_index=True)
+    _, center_col, _ = st.columns([1, 2, 1])
+    with center_col:
+        with st.expander("📋 View tenure group summary table", expanded=True):
+            st.dataframe(tenure_summary, use_container_width=True, hide_index=True)
 
 #new
 st.divider()
 st.subheader("Churn Rate Across Customer Tenure")
+viz_info(
+    "Shows the observed churn rate for each individual tenure value. "
+    "It provides a more detailed view of how churn rates vary throughout "
+    "the customer relationship. Values with fewer customers should be "
+    "interpreted cautiously."
+)
 
 tenure_churn = (
     df.groupby("tenure")
@@ -167,10 +276,14 @@ st.caption(
 )
 
 # Contract and payment method profile
-st.divider()
 
 st.divider()
 st.subheader("4. Service Bundling & Retention Mosaic Chart")
+viz_info(
+    "Explores how combinations of internet services and additional "
+    "features are distributed across customers. It allows you to compare "
+    "service combinations and their relationship with customer retention."
+)
 st.write(
     "Investigate which combinations of internet service and add-on features retain customers best. "
     "Bar width represents customer volume, while bar height shows the exact retention vs. churn split."
@@ -276,6 +389,11 @@ if addon_cols and "InternetService" in internet_df.columns:
 # Customer profile explorer (transparent filtering, not a model)
 st.divider()
 st.subheader("5. Customer profile explorer")
+viz_info(
+    "Allows you to filter customers by selected characteristics and "
+    "explore the resulting group's churn distribution. The displayed "
+    "results update according to the selected filters."
+)
 st.write(
     "Combine customer characteristics to inspect a profile and compare its observed churn rate "
     "with the overall dataset. This is a filter-based descriptive analysis, not a risk prediction."
@@ -303,11 +421,16 @@ tenure_range = st.slider(
 )
 filtered = filtered[filtered["tenure"].between(*tenure_range)]
 
-p1, p2, p3 = st.columns(3)
-p1.metric("Customers in selected profile", f"{len(filtered):,}")
-p2.metric("Profile churn rate", f"{churn_rate(filtered):.1f}%" if len(filtered) else "—")
 difference = churn_rate(filtered) - overall_rate if len(filtered) else 0
-p3.metric("Difference vs. overall", f"{difference:+.1f} pp" if len(filtered) else "—")
+
+if len(filtered):
+    st.caption(
+        f"Selected profile: {len(filtered):,} customers  |  "
+        f"Churn rate: {churn_rate(filtered):.1f}%  |  "
+        f"Difference from overall: {difference:+.1f} percentage points"
+    )
+else:
+    st.caption("No customers match the selected profile.")
 
 if len(filtered):
     status_counts = filtered["Churn"].value_counts().rename_axis("Churn").reset_index(name="Customers")
@@ -324,6 +447,11 @@ st.divider()
 
 # Rule-based profile comparisons inspired by notebook's selected factors, not clustering.
 st.subheader("6. Comparing selected customer profiles")
+viz_info(
+    "Compares selected customer groups using their average monthly charges "
+    "and observed churn rates. This helps highlight differences between "
+    "customer profiles."
+)
 st.write(
     "The notebook's segmentation work highlighted combinations involving contract type, "
     "payment method, internet service, tenure, and paperless billing. The profiles below "
@@ -374,15 +502,27 @@ if rows:
         hover_data=["Customers", "Churned", "Share of dataset (%)"],
         title="Segment Risk vs. Revenue (Bubble Size = Customer Count)",
     )
-    fig_bubble.add_hline(y=overall_rate, line_dash="dash", line_color="#315C8C",
-                         annotation_text=f"Overall: {overall_rate:.1f}%")
-    fig_bubble.update_traces(textposition="top center")
-    st.plotly_chart(style_fig(fig_bubble, 440), use_container_width=True)
-    st.dataframe(profile_df, use_container_width=True, hide_index=True)
+    fig_bubble.add_hline(
+        y=overall_rate,
+        line_dash="dash",
+        line_color="#315C8C",
+        annotation_text=f"Overall: {overall_rate:.1f}%",
+        annotation_position="bottom right",
+    )
+    fig_bubble.update_traces(textposition="top center", cliponaxis=False)
+    fig_bubble.update_layout(
+        xaxis_range=[50,105],
+        yaxis_range=[-5, 65],
+        showlegend=False,
+    )
+    st.plotly_chart(style_fig(fig_bubble, 480), use_container_width=True)
+    with st.expander("📋 View customer profile comparison table", expanded=True):
+        st.dataframe(profile_df, use_container_width=True, hide_index=True)
 st.divider()
 
 # Business interpretation, grounded in the currently loaded data
 st.subheader("7. Business interpretation")
+
 st.markdown(
     """
     Use the comparisons above to frame retention recommendations. A higher observed churn
